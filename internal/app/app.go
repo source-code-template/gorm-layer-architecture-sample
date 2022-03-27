@@ -5,6 +5,8 @@ import (
 	"github.com/core-go/health"
 	"github.com/core-go/log"
 	"github.com/core-go/search/query"
+	sv "github.com/core-go/service"
+	v "github.com/core-go/service/v10"
 	q "github.com/core-go/sql"
 	_ "github.com/go-sql-driver/mysql"
 	g "gorm.io/driver/mysql"
@@ -32,16 +34,21 @@ func NewApp(ctx context.Context, conf Config) (*ApplicationContext, error) {
 	if err != nil {
 		return nil, err
 	}
+	logError := log.ErrorMsg
+	status := sv.InitializeStatus(conf.Status)
+	action := sv.InitializeAction(conf.Action)
+	validator := v.NewValidator()
 
 	userType := reflect.TypeOf(User{})
-	userQuery := query.UseQuery(db, "users", userType)
-	userSearchBuilder, err := q.NewSearchBuilder(db, userType, userQuery)
+	userQueryBuilder := query.NewBuilder(db, "users", userType)
+	userSearchBuilder, err := q.NewSearchBuilder(db, userType, userQueryBuilder.BuildQuery)
 	if err != nil {
 		return nil, err
 	}
+
 	userRepository := NewUserRepository(ormDB)
 	userService := NewUserService(userRepository)
-	userHandler := NewUserHandler(userSearchBuilder.Search, userService, log.ErrorMsg)
+	userHandler := NewUserHandler(userSearchBuilder.Search, userService, status, logError, validator.Validate, &action)
 
 	sqlChecker := q.NewHealthChecker(db)
 	healthHandler := health.NewHandler(sqlChecker)

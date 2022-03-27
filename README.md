@@ -9,14 +9,18 @@ go run main.go
 ### Simple Layer Architecture
 ![Layer Architecture](https://camo.githubusercontent.com/d9b21eb50ef70dcaebf5a874559608f475e22c799bc66fcf99fb01f08576540f/68747470733a2f2f63646e2d696d616765732d312e6d656469756d2e636f6d2f6d61782f3830302f312a4a4459546c4b3030796730496c556a5a392d737037512e706e67)
 
-### Layer Architecture with full features
-![Layer Architecture with standard features: config, health check, logging, middleware log tracing](https://camo.githubusercontent.com/aa7b739a4692eaf2b363cf9caf8b021c60082c77c98d3f8c96665b5cf4640628/68747470733a2f2f63646e2d696d616765732d312e6d656469756d2e636f6d2f6d61782f3830302f312a6d79556b504969343265593477455f494446526176412e706e67)
+### Layer Architecture with standard features: config, health check, logging, middleware log tracing, data validation
+![Layer Architecture with standard features: config, health check, logging, middleware log tracing, data validation](https://camo.githubusercontent.com/49c21446264cf60fe3d03673a900f3656c1c491620daa180e08d4429551d1fb1/68747470733a2f2f63646e2d696d616765732d312e6d656469756d2e636f6d2f6d61782f3830302f312a7576377431444c4c4956355441536e61324a485f57412e706e67)
+
 #### [core-go/search](https://github.com/core-go/search)
 - Build the search model at http handler
 - Build dynamic SQL for search
   - Build SQL for paging by page index (page) and page size (limit)
   - Build SQL to count total of records
 
+#### validator at [core-go/service](https://github.com/core-go/service)
+- Check required, email, url, min, max, enum, regular expression
+- Check phone number with country code
 ### Search users: Support both GET and POST 
 #### POST /users/search
 ##### *Request:* POST /users/search
@@ -137,9 +141,46 @@ GET /users/wolverine
     "dateOfBirth": "1974-11-16T16:59:59.999Z"
 }
 ```
-#### *Response:* 1: success, 0: duplicate key, -1: error
+#### *Response:*
+- status: can be configurable; 1: success, 0: duplicate key, 4: error
 ```json
-1
+{
+    "status": 1,
+    "value": {
+        "id": "wolverine",
+        "username": "james.howlett",
+        "email": "james.howlett@gmail.com",
+        "phone": "0987654321",
+        "dateOfBirth": "1974-11-16T00:00:00+07:00"
+    }
+}
+```
+#### *Fail case sample:* 
+- Request:
+```json
+{
+    "id": "wolverine",
+    "username": "james.howlett",
+    "email": "james.howlett",
+    "phone": "0987654321a",
+    "dateOfBirth": "1974-11-16T16:59:59.999Z"
+}
+```
+- Response: in this below sample, email and phone are not valid
+```json
+{
+    "status": 4,
+    "errors": [
+        {
+            "field": "email",
+            "code": "email"
+        },
+        {
+            "field": "phone",
+            "code": "phone"
+        }
+    ]
+}
 ```
 
 ### Update one user by id
@@ -155,9 +196,52 @@ PUT /users/wolverine
     "dateOfBirth": "1974-11-16T16:59:59.999Z"
 }
 ```
-#### *Response:* 1: success, 0: not found, -1: error
+#### *Response:*
+- status: can be configurable; 1: success, 0: duplicate key, 2: version error, 4: error
 ```json
-1
+{
+    "status": 1,
+    "value": {
+        "id": "wolverine",
+        "username": "james.howlett",
+        "email": "james.howlett@gmail.com",
+        "phone": "0987654321",
+        "dateOfBirth": "1974-11-16T00:00:00+07:00"
+    }
+}
+```
+
+#### Problems for patch
+If we pass a struct as a parameter, we cannot control what fields we need to update. So, we must pass a map as a parameter.
+```go
+type UserService interface {
+    Update(ctx context.Context, user *User) (int64, error)
+    Patch(ctx context.Context, user map[string]interface{}) (int64, error)
+}
+```
+We must solve 2 problems:
+1. At http handler layer, we must convert the user struct to map, with json format, and make sure the nested data types are passed correctly.
+2. At service layer or repository layer, from json format, we must convert the json format to database format (in this case, we must convert to bson of Mongo)
+
+#### Solutions for patch  
+1. At http handler layer, we use [core-go/service](https://github.com/core-go/service), to convert the user struct to map, to make sure we just update the fields we need to update
+```go
+import server "github.com/core-go/service"
+
+func (h *UserHandler) Patch(w http.ResponseWriter, r *http.Request) {
+    var user User
+    userType := reflect.TypeOf(user)
+    _, jsonMap := sv.BuildMapField(userType)
+    body, _ := sv.BuildMapAndStruct(r, &user)
+    json, er1 := sv.BodyToJson(r, user, body, ids, jsonMap, nil)
+
+    result, er2 := h.service.Patch(r.Context(), json)
+    if er2 != nil {
+        http.Error(w, er2.Error(), http.StatusInternalServerError)
+        return
+    }
+    respond(w, result)
+}
 ```
 
 ### Delete a new user by id
