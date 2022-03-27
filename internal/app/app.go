@@ -40,12 +40,11 @@ func NewApp(ctx context.Context, conf Config) (*ApplicationContext, error) {
 	validator := v.NewValidator()
 
 	userType := reflect.TypeOf(User{})
-	userQueryBuilder := query.NewBuilder(db, "users", userType)
-	userSearchBuilder, err := q.NewSearchBuilder(db, userType, userQueryBuilder.BuildQuery)
+	userQuery := query.UseQuery(db, "users", userType)
+	userSearchBuilder, err := q.NewSearchBuilder(db, userType, userQuery)
 	if err != nil {
 		return nil, err
 	}
-
 	userRepository := NewUserRepository(ormDB)
 	userService := NewUserService(userRepository)
 	userHandler := NewUserHandler(userSearchBuilder.Search, userService, status, logError, validator.Validate, &action)
